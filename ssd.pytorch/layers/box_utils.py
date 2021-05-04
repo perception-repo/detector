@@ -124,16 +124,20 @@ def encode(matched, priors, variances):
     Return:
         encoded boxes (tensor), Shape: [num_priors, 4]
     """
-
+    # 对边框坐标进行编码, 需要宽度方差和高度方差两个参数, 具体公式可以参见原文公式(2)
+    # matched: [num_priors,4] 存储的是与priorbox匹配的gtbox的坐标. 形式为(xmin, ymin, xmax, ymax)
+    # priors: [num_priors, 4] 存储的是priorbox的坐标. 形式为(cx, cy, w, h)
+    # return : encoded boxes: [num_priors, 4]
     # dist b/t match center and prior's center
-    g_cxcy = (matched[:, :2] + matched[:, 2:])/2 - priors[:, :2]
+    g_cxcy = (matched[:, :2] + matched[:, 2:])/2 - priors[:, :2] # 用互相匹配的gtbox的中心坐标减去priorbox的中心坐标, 获得中心坐标的偏移量
     # encode variance
-    g_cxcy /= (variances[0] * priors[:, 2:])
+    g_cxcy /= (variances[0] * priors[:, 2:]) # 令中心坐标分别除以 d_i^w 和 d_i^h, 正如原文公式所示
+    # variances[0]为0.1, 令其分别乘以w和h, 得到d_i^w 和 d_i^h
     # match wh / prior wh
-    g_wh = (matched[:, 2:] - matched[:, :2]) / priors[:, 2:]
-    g_wh = torch.log(g_wh) / variances[1]
+    g_wh = (matched[:, 2:] - matched[:, :2]) / priors[:, 2:] # 令互相匹配的gtbox的宽高除以priorbox的宽高
+    g_wh = torch.log(g_wh) / variances[1] # 这里这个variances[1]=0.2 不太懂是为什么
     # return target for smooth_l1_loss
-    return torch.cat([g_cxcy, g_wh], 1)  # [num_priors,4]
+    return torch.cat([g_cxcy, g_wh], 1)  # [num_priors,4] # 将编码后的中心坐标和宽高``连接起来, 返回 [num_priors, 4]
 
 
 # Adapted from https://github.com/Hakuyume/chainer-ssd

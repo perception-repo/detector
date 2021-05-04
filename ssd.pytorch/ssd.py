@@ -72,23 +72,29 @@ class SSD(nn.Module):
 
         # apply vgg up to conv4_3 relu
         for k in range(23):
-            x = self.vgg[k](x)
+            x = self.vgg[k](x) # 计算到vgg/lay09/relu之后，输出尺寸为[256,38,38]
 
         s = self.L2Norm(x)
         sources.append(s)
 
         # apply vgg up to fc7
         for k in range(23, len(self.vgg)):
-            x = self.vgg[k](x)
+            x = self.vgg[k](x) # 计算到vgg/lay20/relu之后，输出尺寸为[1024,19,19]
         sources.append(x)
 
         # apply extra layers and cache source layer outputs
+        # 计算到extras/layer02/relu之后，输出尺寸为[512,10,10]
+        # 计算到extras/layer04/relu之后，输出尺寸为[256,5,5]
+        # 计算到extras/layer06/relu之后，输出尺寸为[256,3,3]
+        # 计算到extras/layer08/relu之后，输出尺寸为[256,1,1]
         for k, v in enumerate(self.extras):
             x = F.relu(v(x), inplace=True)
             if k % 2 == 1:
                 sources.append(x)
 
+        # source layers contains: [[256,38,38], [1024,19,19], [512,10,10], [256,5,5], [256,3,3], [256,1,1]]
         # apply multibox head to source layers
+        # the output priors are: 38^2 × 4+19^2 × 6+10^2 × 6+5^2 × 6+3^2 × 4+1^2 × 4 = 8732
         for (x, l, c) in zip(sources, self.loc, self.conf):
             loc.append(l(x).permute(0, 2, 3, 1).contiguous())
             conf.append(c(x).permute(0, 2, 3, 1).contiguous())
@@ -124,6 +130,36 @@ class SSD(nn.Module):
 # This function is derived from torchvision VGG make_layers()
 # https://github.com/pytorch/vision/blob/master/torchvision/models/vgg.py
 def vgg(cfg, i, batch_norm=False):
+    '''
+    cfg = base['300'] = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'C', 512, 512, 512, 'M', 512, 512, 512]
+    i = 3 # the initial in_channels
+
+    The network architure is as following:
+
+    layer 01: [nn.Conv2d(3, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True)], size: [64,300,300]
+    layer 02: [nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True)], size: [64,300,300]
+    layer 03: [nn.MaxPool2d(kernel_size=2, stride=2)], size: [64, 150, 150]
+    layer 04: [nn.Conv2d(64, 128, kernel_size=3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True)], size: [128,150,150]
+    layer 05: [nn.Conv2d(128, 128, kernel_size=3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True)], size: [128,150,150]
+    layer 06: [nn.MaxPool2d(kernel_size=2, stride=2)], size: [128, 75, 75]
+    layer 07: [nn.Conv2d(128, 256, kernel_size=3, padding=1), nn.BatchNorm2d(256), nn.ReLU(inplace=True)], size: [256,75,75]
+    layer 08: [nn.Conv2d(256, 256, kernel_size=3, padding=1), nn.BatchNorm2d(256), nn.ReLU(inplace=True)], size: [256,75,75]
+    layer 09: [nn.Conv2d(256, 256, kernel_size=3, padding=1), nn.BatchNorm2d(256), nn.ReLU(inplace=True)], size: [256,75,75]
+    layer 10: [nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True)], size: [256, 38, 38] # 剩余数据不足以构成2x2时，计算剩余值的最大值
+
+    layer 11: [nn.Conv2d(256, 512, kernel_size=3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True)], size: [512,38,38]
+    layer 12: [nn.Conv2d(512, 512, kernel_size=3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True)], size: [512,38,38]
+    layer 13: [nn.Conv2d(512, 512, kernel_size=3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True)], size: [512,38,38]
+    layer 14: [nn.MaxPool2d(kernel_size=2, stride=2)], size: [512, 19, 19]
+
+    layer 15: [nn.Conv2d(512, 512, kernel_size=3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True)], size: [512,19,19]
+    layer 16: [nn.Conv2d(512, 512, kernel_size=3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True)], size: [512,19,19]
+    layer 17: [nn.Conv2d(512, 512, kernel_size=3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True)], size: [512,19,19]
+
+    layer 18: [nn.MaxPool2d(kernel_size=3, stride=1, padding=1)], size: [512,19,19]
+    layer 19: [nn.Conv2d(512, 1024, kernel_size=3, padding=6, dilation=6), nn.ReLU(inplace=True)], size: [1024, 19, 19]
+    layer 20: [nn.Conv2d(1024, 1024, kernel_size=1), nn.ReLU(inplace=True)], size: [1024, 19, 19]
+    '''
     layers = []
     in_channels = i
     for v in cfg:
@@ -147,6 +183,19 @@ def vgg(cfg, i, batch_norm=False):
 
 
 def add_extras(cfg, i, batch_norm=False):
+    '''
+    cfg = [256, 'S', 512, 128, 'S', 256, 128, 256, 128, 256]
+    i = 1024 # the initial in_channels
+
+    layer 01: [nn.Conv2d(1024, 256, kernel_size=1)]
+    layer 02: [nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1)], size: [?,0.5,0.5]
+    layer 03: [nn.Conv2d(512, 128, kernel_size=1)]
+    layer 04: [nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1)], size: [?,0.5,0.5]
+    layer 05: [nn.Conv2d(256, 128, kernel_size=1)]
+    layer 06: [nn.Conv2d(128, 256, kernel_size=3)]
+    layer 07: [nn.Conv2d(256, 128, kernel_size=1)]
+    layer 08: [nn.Conv2d(128, 256, kernel_size=3)]
+    '''
     # Extra layers added to VGG for feature scaling
     layers = []
     in_channels = i
@@ -164,6 +213,26 @@ def add_extras(cfg, i, batch_norm=False):
 
 
 def multibox(vgg, extra_layers, cfg, num_classes):
+    '''
+    cfg = [4, 6, 6, 6, 4, 4]
+    num_classes = 21
+
+    loc_layer:
+        layer 01: [nn.Conv2d(256, 4 * 4, kernel_size=3, padding=1)], size: [38,38]
+        layer 02: [nn.Conv2d(1024, 6 * 4, kernel_size=3, padding=1)], size: [19, 19]
+        layer 03: [nn.Conv2d(512, 6 * 4, kernel_size=3, padding=1)], size: [?, ?]
+        layer 04: [nn.Conv2d(256, 6 * 4, kernel_size=3, padding=1)], size: [?, ?]
+        layer 05: [nn.Conv2d(256, 4 * 4, kernel_size=3, padding=1)], size: [?, ?]
+        layer 06: [nn.Conv2d(256, 4 * 4, kernel_size=3, padding=1)], size: [?, ?]
+
+    conf_layers:
+        layer 01: [nn.Conv2d(256, 4 * 21, kernel_size=3, padding=1)], size: [38,38]
+        layer 02: [nn.Conv2d(1024, 4 * 21, kernel_size=3, padding=1)], size: [19, 19]
+        layer 03: [nn.Conv2d(512, 6 * 21, kernel_size=3, padding=1)], size: [?, ?]
+        layer 04: [nn.Conv2d(256, 6 * 21, kernel_size=3, padding=1)], size: [?, ?]
+        layer 05: [nn.Conv2d(256, 4 * 21, kernel_size=3, padding=1)], size: [?, ?]
+        layer 06: [nn.Conv2d(256, 4 * 21, kernel_size=3, padding=1)], size: [?, ?]
+    '''
     loc_layers = []
     conf_layers = []
     vgg_source = [21, -2]
