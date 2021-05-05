@@ -1,0 +1,6 @@
+classes= 80
+train=D:/Desktop/tiny-datasets/coco2014/lists.txt
+valid=D:/Desktop/tiny-datasets/coco2014/lists.txt
+names=data/coco.names
+backup=backup/
+eval=coco
